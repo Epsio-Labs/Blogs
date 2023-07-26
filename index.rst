@@ -9,6 +9,7 @@ Welcome to Epsio Blog's documentation!
 .. toctree::
    :maxdepth: 2
    :caption: Contents:
+   floats/the_bug
 
 
 
