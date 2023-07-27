@@ -1,4 +1,3 @@
-
 # The Hallucinated Rows Incident
 
 Herein lies the tale of the serialization bug that caused one of the weirdest
@@ -177,7 +176,7 @@ previous diffs- if the top 3 remained the same after introducing the new diffs,
 then we only need to update the state with the new diffs- no output is required.
 
 If, however, the top 3 diffs in the combined list is different to what's stored
-in RocksDB, then we need to update our output of this change- for each diff that 
+in RocksDB, then we need to update our output of this change- for each diff that
 is no longer in the top 3, we output its negative, and for each new diff in the
 top 3 we output its positive. Given the new diff `("medium_stone", 0.97): +1`,
 and state as I previously described, our output would be
@@ -257,17 +256,16 @@ only in this case, it proved fatal.
 - What happens
 
 So, here's an interesting question- what happens when Yumi gives her machine a
-stone which weights exactly 0.900? Let's take look at how the input table is suppose
+stone which weights exactly 0.970? Let's take look at how the input table is suppose
 to look-
 
 | stone_name   | weight |
 |--------------|--------|
 | huge_rock    | 2.45   |
+| large_rock   | 1.97   |
 | big_rock     | 1.45   |
 | medium_stone | 0.97   |
-| evil_rock    | 0.900  |
-| small_stone  | 0.77   |
-| tiny_pebble  | 0.13   |
+| evil_stone   | 0.970  |
 
 If everything would've worked correctly, this stone wouldn't matter- it isn't in
 the top 3, it shouldn't effect the output at all. But, in fact, not everything
@@ -282,6 +280,90 @@ Error while executing IVM 5c9e2a10-5d9a-4b41-8c29-63e3a076c24c:
 
 ### The Issue
 
-Let's run the algorithm by hand with the input. In RocksDB, we have this data:
+Let's run the algorithm by hand with the input. After Yumi surrendered four
+random stones to the machine, we have this data in RocksDB:
+
+| stone_name   | weight |
+|--------------|--------|
+| huge_rock    | 2.45   |
+| big_rock     | 1.45   |
+| evil_stone   | 0.970  |
+| medium_stone | 0.97   |
+
+Alas, at this point Yumi's fate is already sealed- the fatal bug has been armed,
+and lies in wait to trigger. When Yumi added these four stones, our engine
+should have outputted the top 3 stones- the top 2 are clearly `huge_rock` and
+`big_rock`, but what does the engine output for the third? Well, the engine
+sorts in memory, and clearly `0.97 == 0.970`- and so the engine will essentially
+pick one at random, (it will use `Vec::sort` and simply pop 3 results)- let's assume the last was `medium_stone`.
+
+This might seem fine at first glance- indeed, if Yumi stopped here nothing would
+seem broken- but a problem arises when a new stone is added:
+When `large_rock` is added, we query RocksDB for the top 3 values -
+these should equal our output in the previous step - but didn't we let
+`Vec::sort` pick the last stone at random? What does RocksDB pick?
+Well, RocksDB is sorted lexicographically- longer values are larger, and so
+`0.970` is always bigger than `0.97`. So the third stone will _always_ be
+`evil_stone`- creating a desynchronization between our actual output, and the
+output we calculated we already sent.
+
+### When the Issue is Triggered
+
+When we enter a new diff in this state (`("large_rock", 1.83): +1`), this is the top 3
+results in RocksDB:
+
+| stone_name   | weight |
+|--------------|--------|
+| huge_rock    | 2.45   |
+| big_rock     | 1.45   |
+| evil_stone   | 0.970  |
+
+When we add this diff into the table and re-sort, the top 3 diffs change-
+`evil_stone` is no longer in the top 3, replaced by `large_rock`, so we must
+emit diffs that signify this change:
+```
+("large_rock", 1.83): +1
+("evil_stone", 0.970): -1
+```
+But, during sorting, `Vec::sort` (which believes `0.97` and `0.970` are equal) might've randomly decided
+to pick `medium_stone` as the third diff, which means that the `("evil_stone", 0.970): -1` diff is deleting
+the wrong entry- we _never outputted_ a positive `("evil_stone", 0.970): +1`
+diff, so what are we outputting this negative diff for?
+
+This is where the error message at the start of this tale saves (i.e. panics)
+us- when this deletion of an `evil_stone` arrives at the final output of the
+engine, it has to be converted back into a regular row operation- in this case,
+the deletion of a `("evil_stone", 0.970)` row from the engine's internal result
+database. But of course, there is no such row- our internal DB can't pop a value
+of which zero exist, and so it panics, like we saw before:
+```
+Error while executing IVM 5c9e2a10-5d9a-4b41-8c29-63e3a076c24c:
+    thread 'tokio-runtime-worker' panicked at 'MACHINE! I KNOW OF NO `evil_stone`! Seriously, stop asking me to delete it!
+                                               Not enough values in db to pop 1 values (popped 0)'
+```
+
+Although I'm only paraphrasing, our internal results DB is actually very polite.
+
 
 ## Conclusion
+
+So what did we learn?
+
+If we take a step back, the reason this bug exists is that we sorted our input
+in two different ways- once in-memory using `Vec::sort`, and once by serializing
+our data and letting RocksDB sort it. So try to not do that, if you can- to put
+it dryly, Don't Repeat Yourself.
+
+But in this specific case, the issue is that we _need_ to use both methods-
+ditching RocksDB is obviously impossible, and using RocksDB to sort everything
+makes our sort 3x slower (I know this because the previous sort algorithm did
+just that). So what did we actually do? Well, that's a story for another time-
+and another post.
+
+### Wait, but what about Yumi, her stone-stacking machine, and its incredible engine?
+
+I'm glad you asked. If you want to try Epsio Lab's _blazingly fast_ (but
+actually just cheating) SQL engine, check us out here[^yumi].
+
+[^yumi]: And if you want to know what happens to Yumi, I wholeheartedly
+    recommend Brandon Sanderson's [Yumi and the Nightmare Painter]().
