@@ -42,38 +42,8 @@ trait constraint:
 pub trait Modification: PartialEq + Default + Add<Output = Self>
 ```
 
-<!--This might be a little much, I should possibly simplify this-->
-
-When data is represented as diffs, a query on the data can be thought of as
-an operation on those diffs - this a complicated subject deserving a story of its
-own, but at its core
-what the Epsio engine does is represent SQL queries as a series of operations
-on an incoming stream of diffs[^2]. A simple operation, like counting the number
-of rows, can be easily represented as summing the modifications of diffs we got
-as an input, and outputting a diff whose key is this result. For the previous
-example, this counting operation would output `5: +1`, which translates to this
-table:
-
-| count |
-|-------|
-| 5     |
-
-If we then give as input the diff `"other_rock: -1"` (i.e. deleting a row), our count operation would
-output:
-```
-5: -1
-4: +1
-```
-which can be read as "delete the row with value `5`, and add a row with value `4`".
-
-
 [^1]: The mathematically astute among you might realize that formally a
     modification can be typed as any [commutative group](https://en.wikipedia.org/wiki/Abelian_group).
-
-[^2]: The exact reason why it is so vital to our Engine to represent data as
-diffs which can be consolidated is beyond the scope of this tale, you can
-simply assume it has to be this way.
-
 
 ### Representing The Real World as Diffs
 
@@ -94,8 +64,8 @@ similar to this:
 | small_pebble | 0.12   |
 
 How would we represent these distinct lines as diffs? Well, easily enough-
-Let's each row can be the key of the diff, with an integer modification
-representing the amount of times the row should appear in the table- meaning the above table
+Each row will be the key of the diff, with an integer modification
+representing the amount of times the row appears in the table. For example, the above table
 translates to:
 ```
 ("big_rock", 1.45)    : +1
@@ -123,7 +93,36 @@ Which would represent this table:
 | medium_stone | 0.97   |
 | medium_stone | 0.97   |
 
+### Operations on Diffs
+
+When data is represented as diffs, a query on the data can be thought of as
+an operation on those diffs - this a complicated subject deserving a story of its
+own, but at its core
+what the Epsio engine does is represent SQL queries as a series of operations
+on an incoming stream of diffs[^2].
+A simple operation, like counting the number
+of rows, can be easily represented as summing the modifications of diffs we got
+as an input, and outputting a diff whose key is this result. For the previous
+example, this counting operation would output `5: +1`, which translates to this
+table:
+
+| count |
+|-------|
+| 5     |
+
+If we then give as input the diff `"other_rock: -1"` (i.e. deleting a row), our count operation would
+output:
+```
+5: -1
+4: +1
+```
+which can be read as "delete the row with value `5`, and add a row with value `4`".
+
 Sorted that out? Great, now we can move to sorting.
+
+[^2]: The exact reason why it is so vital to our Engine to represent data as
+diffs which can be consolidated is beyond the scope of this tale, you can
+simply assume it has to be this way.
 
 ## That's A Lot Of Stone To Sort Through
 
@@ -168,12 +167,13 @@ We want to output these diffs:
 ("big_rock", 1.45): +1
 ("medium_stone", 0.97): +1
 ```
-To output the top 3 stones, our engine has to first store all the stones in some
+To output the top 3 rocks, our engine has to first store all the rocks in some
 sorted way. To do this, we of course picked [RocksDB](https://rocksdb.org/), an
 embedded lexicographically sorted key-value store, which acts as the sorting
 operation's persistent state. In our RocksDB state, the diffs are keyed by the value of
 `weight`, and since RocksDB is sorted, our stored diffs are automatically sorted by their
 weight.
+
 Let's assume Yumi already inputted into the machine three diffs:
 ```
 ("huge_rock", 2.45): +1
@@ -226,12 +226,13 @@ Inherently, RocksDB supports storing only bytes- it has no concept of more
 complicated objects, and so in practice serialization libraries are used to
 convert complicated objects to and from their representation in RocksDB.
 
-Yumi's machine needs to sort its diffs by the `weight` property, which is
-decimal- The engine uses [`rust_decimal::Decimal`](https://docs.rs/rust_decimal/latest/rust_decimal/)
-to represent high precision decimal numbers, which is the case here.
-Serialization of RocksDB keys is done by the [`storekey`](https://docs.rs/storekey/0.5.0/storekey/) crate,
-and so one question remains-
-How does `storekey` serialize `rust_decimal`? Well, using [evcxr](https://github.com/evcxr/evcxr) to run Rust in Jupyter,
+The engine uses [`rust_decimal::Decimal`](https://docs.rs/rust_decimal/latest/rust_decimal/) to
+represent high precision decimal numbers, like the `weight` property.
+Serialization of RocksDB keys is done by the [`storekey`](https://docs.rs/storekey/0.5.0/storekey/) crate.
+To know how Yumi's machine stores diffs, we can now ask-
+
+How does `storekey` serialize `rust_decimal`? <br/>
+Well, using [evcxr](https://github.com/evcxr/evcxr) to run Rust in Jupyter,
 the answer is as a null-terminated string:
 ```rust
 use std::str::{FromStr, from_utf8};
@@ -245,7 +246,7 @@ from_utf8(&storekey::serialize(&a).unwrap()).unwrap()
 Output[1]: "3.141\0"
 ```
 
-This might seem completely nonsensical at first glance, but it actually makes some sense-
+This might seem completely nonsensical at first glance, but it actually makes a lot of sense-
 the ASCII value of digits does correspond to their lexicographical order (0 is
 0x30, 9 is 0x39); since the dot (0x2e) is smaller than all digits, 2.01 will sort
 before 201; and since shorter numbers sort first, 2 will sort before both.
@@ -348,9 +349,9 @@ But, during sorting, `Vec::sort` (which believes `0.97` and `0.970` are equal) p
 which means that the `("evil_stone", 0.970): -1` diff is deleting the wrong entry- we _never outputted_ a positive `("evil_stone", 0.970): +1`,
 we outputted `("medium_stone", 0.97): +1` instead- so what are we outputting this negative `evil_stone` diff for?
 
-This is where the error message at the start of this tale rears his
+This is where the error message at the start of this tale rears its
 unwelcome head- when this deletion of `evil_stone` arrives at the final output of the
-engine, it has to be converted back into a regular row operation- in this case,
+engine, it has to be converted back into a regular row operation; in this case,
 the deletion of a `("evil_stone", 0.970)` row from the engine's internal result
 database. But of course, there is no such row- our internal DB can't pop a value
 of which zero exist, and so it panics, like we saw before:
