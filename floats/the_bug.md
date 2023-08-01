@@ -2,11 +2,14 @@
 
 Herein lies the tale of the serialization bug that caused one of the weirdest
 crashes in the company's history- the infamous "Not enough values in db" panic.
+Delve with me into the depths of implementing but a single SQL operator- `ORDER BY
+... LIMIT`
 
 ## The Big Diff With Our Engine
 
-At Epsio Labs, we develop an incremental SQL engine. Explaining why that's
-useful I'll leave to our [documentation](https://docs.epsio.io/), but to
+At Epsio Labs, we develop an incremental SQL engine- in brief, an SQL engine
+that operates on changes in the data, instead of always using the whole dataset.
+Explaining why that's useful I'll leave to our [documentation](https://docs.epsio.io/), but to
 understand this bug it is important you understand a little how our engine
 works.
 
@@ -21,7 +24,7 @@ their modifications together- consider for example this list of diffs:
 "other_rock": +4
 "rock"      : -2
 ```
-This list can be consolidated a shorter one:
+This list can be consolidated to a shorter one:
 ```
 "rock"      : +1
 "other_rock": +4
@@ -103,20 +106,20 @@ on an incoming stream of diffs[^2].
 A simple operation, like counting the number
 of rows, can be easily represented as summing the modifications of diffs we got
 as an input, and outputting a diff whose key is this result. For the previous
-example, this counting operation would output `5: +1`, which translates to this
+example, this counting operation would output `3: +1`, which translates to this
 table:
 
 | count |
 |-------|
-| 5     |
+| 3     |
 
-If we then give as input the diff `"other_rock: -1"` (i.e. deleting a row), our count operation would
+If we then give as input the diff `("big_rock", 1.45): -1` (i.e. deleting a row), our count operation would
 output:
 ```
-5: -1
-4: +1
+3: -1
+2: +1
 ```
-which can be read as "delete the row with value `5`, and add a row with value `4`".
+which can be read as "delete the row with value `3`, and add a row with value `2`".
 
 Sorted that out? Great, now we can move to sorting.
 
@@ -186,7 +189,7 @@ inputted diffs are also written to RocksDB for persistent storage.
 Now Yumi inputs another stone into the machine, and thus another diff into the
 engine- for example, `("medium_stone", 0.97): +1`.
 What we do (speaking as our royal engine) is query RocksDB for the top 3 diffs we previously stored.
-The top 3 diffs in storage should be equal to our previous output, and also all the data
+The top 3 diffs in storage should be equal to our previous output, and are also all the data
 that is relevant to calculate the new top 3 given the new diffs.
 
 We add into this list the newly inputted diffs, and sort it in memory. Then we
@@ -215,8 +218,8 @@ still be 3- after all, a "top 3" table with four rows in not exactly what Yumi
 is looking for.
 
 Here, you might already see a hint to the devastation that is about to befall Yumi's machine-
-what happens when the diffs we previously outputted don't match the top 3 values currently stored in
-RocksDB?
+what happens when the sorting we do in-memory disagrees with the order RocksDB
+sorts the same diffs?
 
 
 ## Floating Points and Broken storekeys
@@ -324,12 +327,12 @@ Well, RocksDB is sorted lexicographically- longer values are larger, and so
 `0.970` is always bigger than `0.97`. RocksDB has no fancy decimal libraries,
 for it `0.970` is just a string. The third stone in RocksDB will _always_ be
 `evil_stone`- meaning when `Vec::sort` picked `medium_stone` as the third stone
-in the previous step, a desynchronization between our actual previous output and the
-output we calculated we sent when a stone is added is created.
+in the previous step, a desynchronization is created between our actual previous output and the
+output we will calculate we sent.
 
 ### This Makes Even a Machine Panic
 
-When we enter a new diff in this state (e.g. `("large_rock", 1.83): +1`), this is the top 3
+When we enter a new diff in this state (e.g. `("large_rock", 1.83): +1`), these are the top 3
 results in RocksDB:
 
 | stone_name   | weight |
@@ -383,7 +386,7 @@ and another post.
 
 ### Wait, but what about Yumi, her stone-stacking machine, and its absolutely incredible engine?
 
-I'm glad you asked. If you want to try Epsio Lab's _blazingly fast_ (but
+I'm glad you asked. If you want to try Epsio's _blazingly fast_ (but
 actually just cheating) SQL engine, [check us out here](https://www.epsio.io/).[^yumi]
 
 [^yumi]: And if you want to know what happens to Yumi, I wholeheartedly
