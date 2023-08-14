@@ -10,6 +10,8 @@ Welcome to Epsio Blog's documentation!
    :maxdepth: 2
    :caption: Contents:
 
+   floats/the_bug
+
 
 
 Indices and tables
