@@ -3,7 +3,7 @@
 Herein lies the tale of the serialization bug that caused one of the weirdest
 crashes in the company's history- the infamous "Not enough values in db" panic.
 Delve with me into the depths of implementing but a single SQL operator- `ORDER BY
-... LIMIT`
+... LIMIT`.
 
 ## The Big Diff With Our Engine
 
@@ -273,7 +273,7 @@ only in this case, it proved quite fatal.
 ## The Bug
 
 So, here's an interesting question- what happens when Yumi gives her machine a
-stone which weights exactly 0.970? Let's take look at how the input table is supposed
+stone which weights _exactly_ 0.970? Let's take look at how the input table is supposed
 to look, with this weird `evil_stone`-
 
 | stone_name   | weight |
